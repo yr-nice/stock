@@ -1,0 +1,3 @@
+http://download.finance.yahoo.com/d/quotes.csv?s=552.SI+ubs&d=t&f=sl1d1t1c1ohgvj1pp2wern
+
+http://finance.yahoo.com/d/quotes.csv?s=$symbol&f=sl1d1t1c1ohgv&e=.csv

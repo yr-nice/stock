@@ -1,0 +1,1066 @@
+<HTA:APPLICATION
+     ID="objStock"
+     APPLICATIONNAME="Stock"
+     SCROLL="no"
+     SINGLEINSTANCE="no"
+     CAPTION="yes"
+     #BORDER="none"
+     #CONTEXTMENU="no"
+     INNERBORDER="no"
+     ICON="C:\Program Files\Microsoft Office\OFFICE11\MSN.ICO"
+     SELECTION="no"
+     SHOWINTASKBAR="yes"
+     DEBUG="yes"
+     #WINDOWSTATE="minimize"
+>
+
+<HTML>
+<HEAD>
+<TITLE>stotest</TITLE>
+<script type="text/javascript" src="./prototype.js"></script>
+<script type="text/javascript" src="./dateFormat.js"></script>
+<script type="text/javascript" src="./pmjslib.js"></script>
+<link type="text/css" rel="stylesheet" href="main.css"></link>
+</HEAD>
+
+<BODY onload="init()"  onkeypress="procKey()">
+<div id="status" style="margin:5px;">Stopped</div>
+<textarea style="display:none;" id=output width=300></textarea>
+
+<button onclick="start()">Start</button>
+<button onclick="stopPost()">Stop</button>
+<!--button onclick="toggleBoard()">Toggle</button-->
+<button style="display:none;" onclick="testFunc()">test</button>
+
+<select id="chartRange" onchange=changeChartRange()>
+<option value="1d">1 day</option>
+<option value="5d">5 days</option>
+<option value="3m">3 months</option>
+<option value="6m">6 months</option>
+<option value="1y">1 year</option>
+<option value="2y">2 years</option>
+<option value="5y">5 years</option>
+<option value="my">max</option>
+</select>
+
+<input id="msgAlert" type="checkbox" >Alert</input>
+<input id="smsAlert" type="checkbox" >SMS Alert</input>
+
+<div id="priceBoard" style="display:none;">
+  <div>
+  </div>
+  <div id="tabContainer"></div>
+  <div id="curPrice"></div>
+  <div id="charts"></div>
+</div>
+
+<div id="allStock" style="display:none;">
+  <table style='width:100%;' id='allStockTbl'>
+    <tr><td>Name</td><td>Cde</td><td>Last</td><td>Chg</td><td>%</td><td>Buy</td><td>Sell</td><td>BVol</td><td>SVol</td><td>High</td><td>Low</td><td>Sector</td></tr>
+  </table>
+</div>
+
+<script type="text/javascript" >
+
+var fso;
+var ForReading = 1, ForWriting = 2, ForAppending=8;
+fso = new ActiveXObject("Scripting.FileSystemObject");
+//var f;
+var arrStoCode=[];
+var index = 0;
+//var stiBaseUrl = "http://stquote.sgx.com/live/st/STStock.asp?stk=";
+var stiBaseUrl = "http://www.sgx.com/JsonRead/JsonData?qryId=Stock&timeout=30";
+var dicLogFile = new ActiveXObject("Scripting.Dictionary");
+var stop=true;
+var gSleep=false;
+var shell = new ActiveXObject("WScript.Shell");
+var gConf=""
+var gInterval = 2;
+var gSmsAlertArr = [];
+var gLastUpdateDate = "";
+var gAllStockRowCount = 20;
+var gAllStockArr
+var gSortBy = "N"
+
+function init()
+{
+	//shell.AppActivate("stotest");
+	window. resizeTo(800, 100);
+	//setTimeout("shell.AppActivate('stotest')", 1000);
+	//objStock.windowState = "normal";
+	//window.moveTo(300, 300);
+	start()
+	postMonitor()
+}
+
+function toggleBoard()
+{
+	var obj = document.getElementById("priceBoard");
+	if(obj.style.display=="none")
+	{
+		obj.style.display=""
+		document.getElementById("allStock").style.display="none";
+	}
+	else
+	{
+		//resetPriceBoardStyle();
+		obj.style.display="none";
+		document.getElementById("allStock").style.display=""
+	}
+	autoFit();
+
+}
+
+function start()
+{
+	if(stop==true)
+		stop=false;
+	else
+		return;
+	loadSetting();
+	initPriceBoard();
+	//togglePriceBoard();
+	autoFit();
+	clickFirstTab();
+	initFiles();
+	dopost(stiBaseUrl);
+}
+
+function stopPost()
+{
+	//alert("fsd");
+	stop = true;
+	gSleep = false;
+	closeLogs();
+	updateStatus();
+}
+
+function getFolder()
+{
+	//alert(location.href);
+	var re = location.href.match(/file:\/\/\/(.*)stock\.hta/i);
+	//alert(re[1]);
+	if(re[1])
+		return re[1];
+	else
+		return "./";
+}
+
+function initFiles()
+{
+	var date = new Date();
+	gLastUpdateDate = date.format("yyyy-mm-dd")
+	var filename = gLastUpdateDate+".txt";
+	var folderPath = getFolder();
+
+	if(!fso.FolderExists(folderPath+"logs"))
+		fso.CreateFolder(folderPath+"logs");
+	for(i=0;i<arrStoCode.length;i++)
+	{
+		if(!fso.FolderExists(folderPath+"logs/"+arrStoCode[i].name))
+			fso.CreateFolder(folderPath+"logs/"+arrStoCode[i].name);
+		var filepath = 	folderPath+"logs/"+arrStoCode[i].name+"/"+filename;
+
+		var first = !fso.FileExists(filepath);
+		var f = fso.OpenTextFile(filepath, ForAppending, true);
+		if(first)
+			f.WriteLine(arrStoCode[i].title? arrStoCode[i].title : "Time\t\tPrice\tChange\tC%\tBVol\tBuy\tSell\tSVol\tLP\tHP");
+		dicLogFile.Add(arrStoCode[i].name, f);
+	}
+	var path = getFolder() + "alert.ini";
+	try{fso.DeleteFile(path);}catch(e){};
+
+}
+
+function writeFile(path, content)
+{
+	var f = fso.OpenTextFile(path, ForWriting, true);
+	f.Write(content);
+	f.Close();
+}
+
+function debugResp(content)
+{
+	var date = new Date();
+	var path = "c:/temp/" + date.format("yyyy-mm-dd_HH-MM-ss")+".html";
+	writeFile(path, content);
+}
+
+
+function loadSetting()
+{
+	gConf = readFile("config.js");
+	//arrStoCode = content.replace(/\r/, "").split("\n")
+	arrStoCode = eval(gConf);
+	//alert(arrStoCode[0].name);
+}
+
+function readFile(path)
+{
+	var f = fso.OpenTextFile(path, ForReading);
+	return f.ReadAll();
+}
+
+function reloadSetting()
+{
+	closeLogs();
+	loadSetting();
+	initPriceBoard();
+	autoFit();
+	clickFirstTab();
+	initFiles();
+}
+
+function needReload()
+{
+	if(gConf!= readFile("config.js"))
+		return true;
+
+	if(gLastUpdateDate != (new Date()).format("yyyy-mm-dd"))
+		return true;
+
+	return false;
+}
+
+function isValidCode()
+{
+	if(index>=arrStoCode.length)
+	{
+		index=0;
+		//gInterval = 5;
+		if(needReload())
+			reloadSetting()
+		return false;
+	}
+	if(arrStoCode[index].name==null || arrStoCode[index].name.replace(/^\s*|\s*$/, "").length<=0)
+	{
+		index++;
+		return false;
+	}
+	if(arrStoCode[index].skip)
+	{
+		arrStoCode[index].skip = false;
+		index++;
+		return false;
+	}
+
+	arrStoCode[index].name = arrStoCode[index].name.replace(/^\s*|\s*$/, "");
+	//gInterval = 5;
+	return true;
+}
+
+function isValidTime()
+{
+	return true;
+	var date = new Date();
+	var dateStr = date.format("HH:MM");
+	//alert(dateStr);
+	if( (dateStr>="08:50" && dateStr<="12:10") || (dateStr>="13:00" && dateStr<="19:10") )
+	{
+		if(gSleep)
+			initFiles()
+		gSleep = false;
+		return true;
+	}
+	else
+	{
+		if(!gSleep)
+			closeLogs()
+		gSleep = true;
+		updateStatus();
+		setTimeout("dopost(stiBaseUrl)", 10*1000);
+		return false;
+	}
+
+}
+
+function postMonitor()
+{
+	var status = document.getElementById("status").innerHTML;
+	if(status.match(/Running.*/))
+	{
+		status = status.slice(11);
+		var now = (new Date()).format("HH:MM:ss");
+		var curSec = now.slice(0,2)*3600 + now.slice(3,5)*60 + now.slice(6,8)*1
+		var lastSec = status.slice(0,2)*3600 + status.slice(3,5)*60 + status.slice(6,8)*1
+		//alert(curSec + "|" + lastSec)
+		if(curSec-lastSec > 60 || curSec-lastSec<0)
+		{
+			//alert("post again!");
+			dopost(stiBaseUrl);
+		}
+	}
+	setTimeout("postMonitor()", 60*1000);
+}
+
+function dopost(baseUrl)
+{
+	updateStatus();
+	if(stop) return;
+	if(!isValidTime()) return;
+	while(!isValidCode()){}
+	var url = "";
+	if(!arrStoCode[index].url)
+	{
+		var code = arrStoCode[index].name;
+		//url = baseUrl + code.charAt(0);
+		url = baseUrl
+	}
+	else
+		url = arrStoCode[index].url
+
+	//alert("url="+url);
+	requestSent = true;
+
+	new Ajax.Request(url,
+	{
+		method: 'post',
+		asynchronous: true,
+		onComplete: function(transport)
+		{
+			if(!requestSent)
+			{
+				//alert("Response not match, ignore! response is " + transport.responseText);
+				return;
+			}
+			//alert("Response:\n"+transport.responseText);
+			requestSent = false;
+			//debugResp(transport.responseText);
+			procDoc(transport.responseText);
+			index++;
+			//alert("Response:\n"+transport.responseText);
+			setTimeout("dopost(stiBaseUrl)", gInterval*1000);
+		},
+		/*onException: function(obj, e)
+		{ alert("onException: "+e);},*/
+		onFailure: function()
+		{
+			if(!requestSent)
+			{
+				//alert("post failed not match, ignore! response is " + transport.responseText);
+				return;
+			}
+			requestSent = false;
+			//alert("ajax post failed");
+			setTimeout("dopost(stiBaseUrl)", gInterval*1000);
+		}
+
+	});
+}
+
+function logLine(content, cfgObj)
+{
+	var f = dicLogFile.Item(cfgObj.name);
+	f.WriteLine(content);
+}
+
+function closeLogs()
+{
+	for(var i=0; i<arrStoCode.length; i++)
+	{
+		var f = dicLogFile.Item(arrStoCode[i].name);
+		f? f.Close():"";
+	}
+	dicLogFile.RemoveAll();
+}
+
+function procDoc(htmlstr)
+{
+	procSingleStock(htmlstr, arrStoCode[index]);
+
+	//update other stock with same url.
+	for(var i=0; i<arrStoCode.length; i++)
+		if(i!=index)
+			if(  (arrStoCode[i].url && arrStoCode[i].url==arrStoCode[index].url)
+			   ||(!arrStoCode[i].url && !arrStoCode[index].url )
+			   )
+			{
+				procSingleStock(htmlstr, arrStoCode[i]);
+				arrStoCode[i].skip=true;
+			}
+
+/*
+		if(  (arrStoCode[i].url && arrStoCode[i].url==arrStoCode[index].url)
+			   ||(!arrStoCode[i].url && !arrStoCode[index].url && arrStoCode[i].name.charAt(0).toLowerCase()==arrStoCode[index].name.charAt(0).toLowerCase())
+			   )
+			{
+				procSingleStock(htmlstr, arrStoCode[i]);
+				arrStoCode[i].skip=true;
+			}			*/
+
+	updateAllStockBoard(htmlstr);
+}
+
+
+
+function updateAllStockBoard(htmlstr)
+{
+
+	if(arrStoCode[index].url || document.getElementById("allStock").style.display=="none")
+		return;
+
+	if(htmlstr)
+	{
+		eval("gAllStockArr="+htmlstr);
+	}
+	else
+		return;
+
+	var items = sortStocks(gAllStockArr.items)
+	var table = document.getElementById("allStockTbl");
+	//alert(table.rows.length)
+	if(table.rows.length != gAllStockRowCount+1)
+	{
+
+		//alert(gAllStockRowCount+1)
+		while(table.rows.length>1)
+		{
+			alert(table.rows.length)
+			table.deleteRow(1);
+		}
+
+		for(var i=0; i<gAllStockRowCount; i++)
+		{
+			var row = document.getElementById("allStockTbl").insertRow(-1);
+			for(var j=0; j<12; j++)
+			{
+				row.insertCell()
+				row.cells[0].innerHTML = "NA"
+			}
+		}
+
+		autoFit()
+	}
+
+
+	for(var i=0; i<gAllStockRowCount; i++)
+	{
+		var row = document.getElementById("allStockTbl").rows[i+1];
+		row.cells[0].innerHTML = items[i].N;
+		row.cells[1].innerHTML = items[i].NC;
+		row.cells[2].innerHTML = items[i].LT;
+		row.cells[3].innerHTML = items[i].C;
+		row.cells[4].innerHTML = items[i].P;
+		row.cells[5].innerHTML = items[i].B;
+		row.cells[6].innerHTML = items[i].S;
+		row.cells[7].innerHTML = items[i].BV;
+		row.cells[8].innerHTML = items[i].SV;
+		row.cells[9].innerHTML = items[i].H;
+		row.cells[10].innerHTML = items[i].L;
+		row.cells[11].innerHTML = sectorMap(items[i].SC);
+	}
+
+}
+
+function sectorMap(value){
+	switch(value)
+		{
+			case "1": return "Multi";
+			case "2": return "MFG";
+			case "3": return "CONS";
+			case "4": return "COM";
+			case "5": return "LOANS";
+			case "6": return "Hotels";
+			case "7": return "TSC";
+			case "8": return "FIN";
+			case "9": return "PROP";
+			case "A": return "SERV";
+			case "B": return "AGR";
+			case "C": return "MINQ";
+			case "D": return "EGW";
+			default : return "";
+	}
+}
+function sortStocks(items)
+{
+	return items;
+}
+
+function procSingleStock(htmlstr, obj)
+{
+	var arr;
+	if(obj.getStockData)
+		arr = obj.getStockData(htmlstr);
+	else if(obj.pattern)
+	{
+		//alert(htmlstr);
+		arr = minMatch(htmlstr, obj.pattern);
+		if(!arr) return;
+		//alert(arr);
+	}
+	else
+	{
+		/**** process old SGX page, 13may2009
+		var re = new RegExp( "\\r([^\\r]*>"+obj.name+"[^\\r]*)\\r", "ig");
+		re.exec(htmlstr);
+		//alert(RegExp.$1);
+
+		var info = removeTag(RegExp.$1.replace(/\/td><td/ig, "/td>\n<td"))
+		var str = removeHtmlChar(removeTag(info));
+		arr = str.split("\n");*/
+		eval("var a="+htmlstr)
+		//alert(a);
+		//alert(a.items.length);
+		for(var i=0; i<a.items.length; i++)
+			if(   a.items[i].N && a.items[i].N.toLowerCase()==obj.name.toLowerCase()
+			   || (obj.sticode && a.items[i].NC.toLowerCase()==obj.sticode.toLowerCase())
+			   || a.items[i].PN && a.items[i].PN.toLowerCase()==obj.name.toLowerCase() )
+			{
+				arr = a.items[i];
+				break;
+			}
+		if(!arr) return;
+		//alert(arr.N);
+
+	}
+	var stoObj = createStockObj(arr, obj);
+	updatePriceBoard(stoObj, obj);
+	if(needUpdate(stoObj, obj))
+	{
+		obj.stoObj = stoObj;
+		logPrice(stoObj, obj);
+	}
+	if(document.getElementById("msgAlert").checked)
+		msgAlert(obj);
+  	if(document.getElementById("smsAlert").checked)
+		smsAlert(obj);
+
+	//alert(3);
+	return;
+
+}
+function changeChartRange()
+{
+	for(var i=0; i<arrStoCode.length; i++)
+	{
+		var id = getStockId(arrStoCode[i]);
+		var chart = document.getElementById(id + "_chart");
+		if(chart && chart.innerHTML!="")
+		{
+			showChart(id, true);
+		}
+	}
+
+
+}
+
+function showChart(id, onlyUpdate)
+{
+	//alert(id);
+	var chartCode;
+	for(var i=0; i<arrStoCode.length; i++)
+	{
+		if(id == getStockId(arrStoCode[i]))
+		{
+			chartCode = arrStoCode[i].yahooSymbol;
+			break;
+		}
+	}
+
+	if(chartCode)
+	{
+		var url = getChartUrl(chartCode);
+		onlyUpdate? updateStockChart(id, url):showStockChart(id, url);
+	}
+
+}
+
+function getChartUrl(code)
+{
+	var a = document.getElementById("chartRange").value;
+	var url = "";
+	//alert(code);
+	var short = code.charAt(0) == "^" ? "%5E"+code.slice(1): code;
+	var long = code.charAt(0) == "^" ? "_"+code.slice(1): code;
+	if(a == "1d")
+		url = "http://ichart.finance.yahoo.com/b?s="+short;
+	else if(a == "5d")
+		url = "http://ichart.finance.yahoo.com/w?s="+short;
+	else
+	    url = String.format("http://chart.finance.yahoo.com/c/%s/%s/%s", a, long.charAt(0).toLowerCase(), long.toLowerCase());
+	//alert(url);
+	return url;
+}
+
+function showStockChart(id, url)
+{
+	var div = updateStockChart(id, url);
+	div.style.display = "";
+	autoFit();
+}
+
+function updateStockChart(id, url)
+{
+	var div = document.getElementById(id+"_chart");
+	if(!div)
+	{
+		var chartContainer = document.getElementById("charts");
+		div = document.createElement("div");
+		div.id = id+"_chart";
+		div.ondblclick = function (){this.innerHTML=""; autoFit();}
+		chartContainer.appendChild(div);
+
+	}
+	//alert(div.id);
+	div.innerHTML = String.format("<a onclick='closeChart(this)'>Close</a><div class='chartContainer'><img src='%s'></img></div>", url);
+	return div;
+}
+
+function closeChart(obj)
+{
+	obj.parentNode.innerHTML="";
+	autoFit();
+}
+function needUpdate(obj, cfgObj)
+{
+	if(cfgObj.stoObj)
+	{
+		for(var i in obj)
+		{
+			if(obj[i] != cfgObj.stoObj[i])
+				return true;
+		}
+		return false
+	}
+	return true;
+}
+
+function logPrice(stoObj, cfgObj)
+{
+
+	var line = genLogStr(stoObj, cfgObj);
+
+	logLine(line, cfgObj);
+
+}
+
+
+function genLogStr(obj, cfgObj)
+{
+
+	var str = "";
+	if(cfgObj.logStr)
+	{
+		str = cfgObj.logStr(obj);
+	}
+	else
+	{
+		var time = "[" + (new Date()).format("HH:MM:ss") + "] \t";
+		var str = time + obj.curPrice + "\t" + obj.change + "\t" + obj.changePercent + "\t" + obj.buyVol  + "\t" +
+				  obj.buyPrice + "\t" + obj.sellPrice + "\t" + obj.sellVol + "\t" + obj.highPrice + "\t" + obj.lowPrice;
+	}
+	return str;
+}
+
+function createStockObj(arr, cfgObj)
+{
+	var obj = new stock();
+	if(cfgObj.attrs)
+	{
+		for(var i=0; i<cfgObj.attrs.length; i++)
+			obj[ cfgObj.attrs[i] ] = arr[i+1].replace(/^\s|\s$/g, "");
+	}
+	else
+	{
+		//obj.name = arr[1];
+		obj.name = cfgObj.name;
+		/**** process old SGX page, 13may2009
+		obj.curPrice = arr[3];
+		obj.change = arr[4];
+		obj.changePercent = arr[5];
+		obj.tranVol = arr[6];
+		obj.buyVol = arr[7];
+		obj.buyPrice = arr[8];
+		obj.sellPrice = arr[9]
+		obj.sellVol = arr[10];
+		obj.highPrice = arr[11];
+		obj.lowPrice = arr[12];
+		*/
+		obj.curPrice = arr["LT"];
+		obj.change = arr["C"];
+		obj.changePercent = arr["P"];
+		obj.tranVol = arr["VL"];
+		obj.buyVol = arr["BV"];
+		obj.buyPrice = arr["B"];
+		obj.sellPrice = arr["S"]
+		obj.sellVol = arr["SV"];
+		obj.highPrice = arr["H"];
+		obj.lowPrice = arr["L"];
+
+		var cur = parseFloat(obj.curPrice);
+		var change = (parseFloat(obj.change));
+		if(!cur)cur=obj.lowPrice;
+		if(!change)change=0;
+		obj.yestPrice = (cur-change).toFixed(3);
+		/*
+		for(var x in obj)
+			alert(x + "=" + obj[x]);*/
+		//alert(obj.yestPrice);
+	}
+
+	return obj;
+}
+
+function stock()
+{
+	var name;
+	var curPrice;
+	var change;
+	var changePercent;
+	var tranVol;
+	var buyVol;
+	var sellVol;
+	var buyPrice;
+	var sellPrice;
+	var highPrice;
+	var lowPrice;
+	var yestPrice;
+}
+
+function removeTag(str)
+{
+	return str.replace(/<[^>]*>/g, "");
+}
+
+function removeHtmlChar(str)
+{
+	return str.replace(/&[^;]+;/g, "")
+}
+
+function getParentNode(node, tagName)
+{
+	var parent = null;
+	while(true)
+	{
+		parent = node.parentNode;
+		if(parent.tagName.toLowerCase() == tagName)
+			break;
+	}
+	return parent;
+}
+
+function toDOM(HTMLstring)
+{
+	var d = document.createElement('div');
+	d.innerHTML = HTMLstring;
+	var docFrag = document.createDocumentFragment();
+	while (d.firstChild)
+	{
+		docFrag.appendChild(d.firstChild)
+	};
+	return docFrag;
+}
+
+
+function blink()
+{
+	var content = document.getElementById("content");
+	content.style.color=="blue" ? content.style.color="red":content.style.color="blue";
+}
+
+function updateStatus()
+{
+	var status = document.getElementById("status");
+	time = new Date();
+	str = stop? "Stopped!" : "Running...";
+	str = gSleep? "Sleeping..." : str;
+	str += " "+time.format("HH:MM:ss");
+	status.innerHTML = str;
+}
+
+function initPriceBoard()
+{
+	var tab = document.getElementById("tabContainer");
+	var strTab = "";
+	var groups = getAllGroups();
+	for(var i in groups)
+	{
+		strTab += "<a onclick='clickTab(this)'>"+groups[i]+"</a>";
+	}
+	tab.innerHTML = strTab;
+
+
+	var obj = document.getElementById("curPrice");
+	var str = "<table style='width:100%;' id='priceTbl'>" +
+	          "<tr id='board_title'><td><b>Name</b></td><td><b>Cur/Last(Yesterday) Price</b></td><td><b>Buy/Sell Price</b></td><td><b>%</b></td><td><b>Time</b></td><td><b>Chart</b></td>"
+	for(var i=0; i<arrStoCode.length; i++)
+	{
+		str += String.format("<tr id=%s name=%s ondblclick='clickStock(this.id)' ><td>%s</td><td></td><td></td><td></td><td></td><td><a onclick='showChart(\"%s\")'>Chart</a><td></tr>",
+								getStockId(arrStoCode[i]), arrStoCode[i].group?arrStoCode[i].group.replace(/,\s*/g, "-"):"", arrStoCode[i].name	, getStockId(arrStoCode[i])	);
+	}
+	str += "</table>"
+	obj.innerHTML =str;
+	//alert(str);
+}
+
+function clickFirstTab()
+{
+	var tabs = document.getElementById("tabContainer").getElementsByTagName("a");
+	clickTab(tabs[0]);
+}
+function clickTab(obj)
+{
+	setAllTabClr("#E5E5E5");
+	obj.style.background = "white";
+	if(obj.innerHTML.toLowerCase() == "all")
+	{
+		showAllRows();
+	}
+	else
+	{
+		showSpecRows(obj.innerHTML);
+	}
+	autoFit();
+}
+
+function getStockId(obj)
+{
+	return obj.name.replace(/\s/g, "")
+}
+
+function showSpecRows(groupName)
+{
+	var ptn = new RegExp("\\-?"+groupName+"\\-?", "i");
+	var rows = document.getElementById("priceTbl").rows;
+	for(var i=1; i<rows.length; i++)
+	{
+		rows[i].name.match(ptn) ? rows[i].style.display = "" : rows[i].style.display = "none";
+	}
+	//show chart
+	for(var i=1; i<arrStoCode.length; i++)
+	{
+		var id = getStockId(arrStoCode[i])+"_chart";
+		var chart = document.getElementById(id);
+        //alert(id+":"+chart);
+		if(!chart) continue;
+		if(arrStoCode[i].group && arrStoCode[i].group.match(ptn))
+		{
+			chart.style.display="";
+		}
+		else
+		{
+			chart.style.display="none";
+		}
+	}
+
+
+
+}
+
+function showAllRows()
+{
+	var rows = document.getElementById("priceTbl").rows;
+	for(var i=0; i<rows.length; i++)
+		rows[i].style.display = "";
+	//show chart
+	for(var i=0; i<arrStoCode.length; i++)
+	{
+		var id = getStockId(arrStoCode[i])+"_chart";
+		var chart = document.getElementById(id);
+		if(!chart) continue;
+		chart.style.display="";
+	}
+}
+
+function autoFit()
+{
+	window. resizeTo(800, document.body.scrollHeight+38);
+}
+
+function getAllGroups()
+{
+	var re = new Object();
+	re["All"] = "All";
+	for(var i=0; i<arrStoCode.length; i++)
+	{
+		if(arrStoCode[i].group)
+		{
+			var arr = arrStoCode[i].group.split(",");
+			for(var j=0; j<arr.length; j++)
+				re[arr[j].replace(/^\s|\s$/g,"")] = arr[j].replace(/^\s|\s$/g,"");
+		}
+	}
+	return re;
+
+}
+
+function clickStock(id)
+{
+	var path;
+	for(var i=0; i<arrStoCode.length; i++)
+	{
+		if(id == getStockId(arrStoCode[i]))
+		{
+			var filename = (new Date()).format("yyyy-mm-dd")+".txt";
+			path = "\""+getFolder()+"logs/"+arrStoCode[i].name+"/"+filename+"\"";
+			//alert(path);
+			break;
+		}
+	}
+	if(path)
+		shell.run(path);
+
+	//alert(id)
+}
+function updatePriceBoard(obj, cfgObj)
+{
+	var id = cfgObj.name.replace(/\s/g, "");
+	var row = document.getElementById(id);
+	if(cfgObj.priceBoard)
+	{
+		var arr = cfgObj.priceBoard(obj,  cfgObj.stoObj);
+		//alert(arr);
+		for(var i=1; i<arr.length; i++)
+			row.cells[i].innerHTML = arr[i];
+	}
+	else
+	{
+		row.cells[1].innerHTML = String.format("%s/%s(%s)", obj.curPrice, cfgObj.stoObj? cfgObj.stoObj.curPrice:"-",  obj.yestPrice);
+		row.cells[2].innerHTML = String.format("%s/%s", obj.buyPrice, obj.sellPrice);
+		row.cells[3].innerHTML = obj.changePercent+"%";
+		row.cells[4].innerHTML = (new Date()).format("HH:MM:ss");
+	}
+
+	if(cfgObj.stoObj )
+	{
+		var compareAttr = cfgObj["compareAttr"] ? cfgObj["compareAttr"] : "curPrice";
+		var cur = obj[compareAttr];
+		var old = cfgObj.stoObj[compareAttr];
+		if (cur!= old)
+		{
+			cur>old ? row.style.color="green":row.style.color="red";
+			row.style.fontWeight = "bold";
+		}
+	}
+
+	//alert(document.getElementById(id).innerHTML);
+}
+
+function procKey()
+{
+	//alert(event.keyCode);
+	if(event.ctrlLeft)
+	{
+		if(event.keyCode==17) 	//ctrl+Q
+			togglePriceBoard();
+		else if(event.keyCode==23) //ctrl+W
+		{
+			window.screenLeft>0 ? window.moveTo(-1000, -1000):window.moveTo(300, 300);
+		}
+		else if(event.keyCode==1) //ctrl+A
+		{
+			toggleElement("charts", true);
+		}
+		else if(event.keyCode==19) //ctrl+A
+		{
+			toggleElement("tabContainer");
+			toggleElement("curPrice", true);
+		}
+		//alert(event.keyCode);
+	}
+}
+
+function toggleElement(id, autofit)
+{
+	var obj = document.getElementById(id);
+	obj.style.display=="none" ? obj.style.display="":obj.style.display="none";
+	autofit? autoFit():"";
+}
+
+function setAllTabClr(color)
+{
+	var tabs = document.getElementById("tabContainer").getElementsByTagName("a");
+	//alert(tabs.length)
+	//alert(tabs[0].style.background)
+	for(var i=0; i<tabs.length; i++)
+		tabs[i].style.background = color;
+}
+
+function togglePriceBoard()
+{
+	var obj = document.getElementById("priceBoard");
+	if(obj.style.display=="none")
+		obj.style.display=""
+	else
+	{
+		resetPriceBoardStyle();
+		obj.style.display="none";
+	}
+	autoFit();
+}
+
+function resetPriceBoardStyle()
+{
+	for(var i=0; i<arrStoCode.length; i++)
+	{
+		var id = getStockId(arrStoCode[i]);
+		var row = document.getElementById(id);
+		row.style.fontWeight="";
+		row.style.color="black";
+
+	}
+}
+
+function testFunc()
+{
+	//setTimeout("testFunc()", 7*1000)
+	//shell.AppActivate("stotest");
+	//shell.Run("C:\\Project\\Code\\SelfCreatedTool\\clock.hta");
+	/*for(var i in objStock)
+		alert(i+":"+objStock[i]);*/
+	//alert(objStock["commandLine"]);
+	//alert(folderPath+"alert.hta");
+	//shell.run(folderPath+"alert.hta haha this is an alert");
+	//shell.SendKeys("^%+{F4}");
+	postMonitor()
+}
+
+function msgAlert(cfgObj)
+{
+	var path = getFolder() + "alert.hta ";
+	if(cfgObj.upPriceAlert && parseFloat(cfgObj.stoObj.curPrice) && cfgObj.stoObj.curPrice >= cfgObj.upPriceAlert)
+		shell.run(path + cfgObj.name+"<br>"+cfgObj.stoObj.curPrice+" >= "+cfgObj.upPriceAlert);
+	else if(cfgObj.downPriceAlert && parseFloat(cfgObj.stoObj.curPrice) && cfgObj.stoObj.curPrice <= cfgObj.downPriceAlert)
+		shell.run(path + cfgObj.name+"<br>"+cfgObj.stoObj.curPrice+" <= "+cfgObj.downPriceAlert);
+
+}
+
+function smsAlert(cfgObj)
+{
+	var path = getFolder() + "alert.ini";
+	var message = ""
+	if(cfgObj.upPriceAlert && parseFloat(cfgObj.stoObj.curPrice) && cfgObj.stoObj.curPrice >= cfgObj.upPriceAlert)
+		message = cfgObj.name+": Cur Price "+cfgObj.stoObj.curPrice+" >= Limit "+cfgObj.upPriceAlert;
+	else if(cfgObj.downPriceAlert && parseFloat(cfgObj.stoObj.curPrice) && cfgObj.stoObj.curPrice <= cfgObj.downPriceAlert)
+		message = cfgObj.name+": Cur Price "+cfgObj.stoObj.curPrice+" <= Limit "+cfgObj.downPriceAlert;
+	//alert(message)
+	//var content = String.format("[contact1]\n phone=91386034\n messgae=%s\n"
+	if(message.length>0 && !fso.FileExists(path))
+	{
+		var id = cfgObj.name.replace(/\s/, "");
+		if(!gSmsAlertArr[id] || gSmsAlertArr[id] != cfgObj.stoObj.curPrice)
+		{
+			var f = fso.OpenTextFile(path, ForWriting, true);
+			writeSmsAlert(f, path, 1, 91386034, "Stock Alert for pm: "+message)
+			//writeSmsAlert(f, path, 2, 90692504, "Stock Alert for laopo: "+message)
+			f.Close();
+
+			gSmsAlertArr[id] = cfgObj.stoObj.curPrice;
+			shell.SendKeys("^%+{F3}");
+		}
+	}
+
+}
+
+function writeSmsAlert(f, path, index, phone, message)
+{
+	f.WriteLine("[contact"+index+"]");
+	f.WriteLine("phone="+phone);
+	f.WriteLine("message="+message);
+}
+
+
+</script>
+</BODY>
+
+</HTML>

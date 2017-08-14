@@ -1,0 +1,63 @@
+body {
+font-family: "lucida grande", tahoma, verdana, arial, sans-serif;
+font-size: 11px;
+background:;
+margin:2 10px 0 10px;
+}
+
+table {
+font-family: "lucida grande", tahoma, verdana, arial, sans-serif;
+font-size: 12px;
+}
+
+#tabContainer {
+border-left: 1px solid #c0c0c0;
+position: relative;
+top:1px;
+}
+
+#curPrice {
+border: 1px solid #c0c0c0;
+}
+
+#priceBoard {
+display:
+}
+
+#tabContainer a {
+border-top: 1px solid #c0c0c0;
+border-right: 1px solid #c0c0c0;
+padding: 3px;
+font-family: "lucida grande", tahoma, verdana, arial, sans-serif;
+font-size: 13px;
+cursor: pointer;
+height: 15px;
+width:60px;
+text-align:center;
+
+}
+
+table a{
+cursor: pointer;
+font-weight:bold;
+}
+
+#charts div{
+text-align:right;
+float: left;
+}
+
+#charts div a{
+cursor: pointer;
+font-weight:bold;
+font-size:11px;
+color: blue;
+}
+
+.chartContainer{
+height: 290px;
+width: 520px;
+}
+
+#charts img{
+}

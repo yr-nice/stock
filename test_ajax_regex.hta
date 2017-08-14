@@ -1,0 +1,66 @@
+<html>
+<head>
+  <title>Testing page for Ajax and Regular Expression</title>
+  <script type="text/javascript" src="./prototype.js"></script>
+  <script type="text/javascript" src="./dateFormat.js"></script>
+  <script type="text/javascript" src="./pmjslib.js"></script>
+
+  <script>
+	function postRequest()
+	{
+		var url = document.getElementById("url_input").value;
+		alert(url)
+		new Ajax.Request(url,
+		{
+			method: 'get',
+			asynchronous: true,
+			onComplete: function(transport)
+			{
+				alert(transport.responseText)
+				document.getElementById("response_txt").value = transport.responseText;
+			},
+			onFailure: function()
+			{
+				document.getElementById("response_txt").value = "Failed";
+			}
+		})
+	}
+
+	function testRegex()
+	{
+		var resp = document.getElementById("response_txt").value;
+		//var pattern = document.getElementById("regex_input").value;
+		eval("var pattern = "+document.getElementById("regex_input").value);
+		//alert(pattern);
+		var arr = minMatch(resp, pattern);
+		var str = ""
+		if(!arr || arr.length<1)
+			document.getElementById("regex_txt").value="Not Match!";
+		else
+		{
+			for(var i=0; i<arr.length; i++ )
+				str += i+":"+arr[i] + "\n"
+			document.getElementById("regex_txt").value=str;
+		}
+
+
+	}
+
+  </script>
+
+</head>
+
+<body>
+<table>
+  <tr><td>URL</td><td><input id=url_input size=102 value="http://"/></td></tr>
+  <tr><td>Regex</td><td><input id=regex_input size=102 value="/.*/i"/></td></tr>
+</table>
+  <button onclick="postRequest()">Post Request</button>
+  <button onclick="testRegex()">Test Regex</button>
+
+<div>Response:</div>
+<textarea id=response_txt style="width:100%;height:300px;"></textarea>
+<div>Regex Result:</div>
+<textarea id=regex_txt style="width:100%;height:300px;"></textarea>
+</body>
+</html>

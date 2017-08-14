@@ -1,0 +1,53 @@
+<HTA:APPLICATION
+     ID="objStockAlert"
+     APPLICATIONNAME="Alert"
+     SCROLL="no"
+     SINGLEINSTANCE="no"
+     CAPTION="no"
+     #BORDER="none"
+     #CONTEXTMENU="no"
+     INNERBORDER="no"
+     ICON="C:\Program Files\Microsoft Office\OFFICE11\MSN.ICO"
+     SELECTION="no"
+     SHOWINTASKBAR="yes"
+>
+
+<HTML>
+<HEAD>
+<TITLE></TITLE>
+</HEAD>
+
+<BODY onload="init()"  style="background:#FB9394;" >
+	<div id="content" style="text-align:center; font-weight:bold; font-size:22; font-family:Eras Medium ITC; color:blue;"></div>
+</BODY>
+
+<script type="text/javascript" >
+function init()
+{
+	window. resizeTo(200, 100);
+	window. moveTo(500, 100);
+	var content = document.getElementById("content");
+	var date = new Date();
+	content.innerHTML = getMsg();
+	setInterval("blink()", 300);
+	setTimeout("window.close()", 1000*5);
+	//alert("HERE!!");
+}
+
+function getMsg()
+{
+	var re = objStockAlert.commandLine.match(/[^ ]* (.*)\"?/i);
+	//alert(re[1]);
+	return re[1]||"";
+}
+
+function blink()
+{
+	var content = document.getElementById("content");
+	content.style.color=="blue" ? content.style.color="red":content.style.color="blue";
+
+}
+
+</script>
+
+</HTML>
